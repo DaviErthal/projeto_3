@@ -3,7 +3,7 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Fixed callback ID mismatch and rounded coefficient display.
+# NEW: Added a rounded-up mean column to the Excel export.
 
 import math
 import random
@@ -12,8 +12,8 @@ from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
-# You will need to install dash and its components
-# pip install dash pandas plotly
+# You will need to install dash, pandas, plotly, and openpyxl
+# pip install dash pandas plotly openpyxl
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
@@ -109,7 +109,6 @@ def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rat
                 project_needs = proj.get_staffing_needs()
                 for role, requirements_by_scale in project_needs.items():
                     if proj.p_scale in requirements_by_scale:
-                        # This line was subtly incorrect in the prompt, correcting it for safety.
                         monthly_demand[role][proj.p_scale] += requirements_by_scale[proj.p_scale]
         
         current_date = start_date + pd.DateOffset(months=month - 1)
@@ -155,28 +154,17 @@ def create_coefficient_inputs():
     inputs = []
     for role in roles:
         role_inputs = [html.H5(role, style={'textAlign': 'center', 'marginTop': '15px'})]
-        
-        # --- FIXED: Sanitize role name for use in IDs ---
         sanitized_role = role.replace(" ", "").lower()
-
-        # Pre-analysis inputs
         pa_div = [html.Label("Pre-analysis: ")]
         for scale in ["Small", "Medium", "Large"]:
             pa_div.append(html.Label(f"{scale}:"))
-            # --- FIXED: Use sanitized role name in ID ---
-            # --- FIXED: Round to 3 decimal places ---
             pa_div.append(dcc.Input(id=f'coef-{sanitized_role}-pa-{scale.lower()}', type='number', value=round(STAFFING_COEFFICIENTS.get("Pre-analysis", {}).get(role, {}).get(scale, 0), 3), step=0.001, style={'width': '80px', 'marginRight': '10px'}))
         role_inputs.append(html.Div(pa_div))
-        
-        # Actual Work inputs
         aw_div = [html.Label("Actual Work: ")]
         for scale in ["Small", "Medium", "Large"]:
             aw_div.append(html.Label(f"{scale}:"))
-            # --- FIXED: Use sanitized role name in ID ---
-            # --- FIXED: Round to 3 decimal places ---
             aw_div.append(dcc.Input(id=f'coef-{sanitized_role}-aw-{scale.lower()}', type='number', value=round(STAFFING_COEFFICIENTS.get("Actual Work", {}).get(role, {}).get(scale, 0), 3), step=0.001, style={'width': '80px', 'marginRight': '10px'}))
         role_inputs.append(html.Div(aw_div))
-        
         inputs.append(html.Div(role_inputs, style={'borderTop': '1px solid #eee', 'paddingTop': '10px'}))
     return html.Div(inputs)
 
@@ -249,7 +237,6 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
 def toggle_personalized_inputs(scenario_name):
     return {'display': 'block', 'marginTop': '20px', 'borderTop': '1px solid #ccc', 'paddingTop': '20px'} if scenario_name == 'Personalized' else {'display': 'none'}
 
-# --- FIXED: The main callback now has sanitized State IDs ---
 @app.callback(
     Output('output-graphs', 'children'),
     Input('run-button', 'n_clicks'),
@@ -263,7 +250,7 @@ def toggle_personalized_inputs(scenario_name):
         # Custom duration inputs
         State('dur-pa-small', 'value'), State('dur-pa-medium', 'value'), State('dur-pa-large', 'value'),
         State('dur-aw-small', 'value'), State('dur-aw-medium', 'value'), State('dur-aw-large', 'value'),
-        # --- FIXED: States for custom coefficient inputs now use sanitized IDs ---
+        # Custom coefficient inputs
         State('coef-analyst-pa-small', 'value'), State('coef-analyst-pa-medium', 'value'), State('coef-analyst-pa-large', 'value'),
         State('coef-analyst-aw-small', 'value'), State('coef-analyst-aw-medium', 'value'), State('coef-analyst-aw-large', 'value'),
         State('coef-technical-pa-small', 'value'), State('coef-technical-pa-medium', 'value'), State('coef-technical-pa-large', 'value'),
@@ -298,7 +285,6 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         "Actual Work": {"Small": dur_aw_s, "Medium": dur_aw_m, "Large": dur_aw_l}
     }
 
-    # --- FIXED: Reconstruct the staffing coefficients dictionary from inputs ---
     custom_coeffs = {"Pre-analysis": {}, "Actual Work": {}}
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
     c_idx = 0
@@ -318,8 +304,31 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         staffing_coefficients=custom_coeffs 
     )
 
-    # --- Create the graphs (logic remains the same) ---
+    # --- MODIFIED: EXPORT TO EXCEL ---
     hired_total_columns = [col for col in simulation_df.columns if 'Hired (Total)' in col]
+    mean_data = []
+    for col in hired_total_columns:
+        role_name = col.replace(" Hired (Total)", "")
+        mean_value = simulation_df[col].mean()
+        # Add both the mean and the rounded-up mean
+        mean_data.append({
+            "Role": role_name,
+            "Mean Hired Employees": mean_value,
+            "Mean Hired Employees Rounded Up": math.ceil(mean_value)
+        })
+    
+    mean_results_df = pd.DataFrame(mean_data)
+    # Ensure the rounded up column is an integer for clean formatting
+    mean_results_df["Mean Hired Employees Rounded Up"] = mean_results_df["Mean Hired Employees Rounded Up"].astype(int)
+    
+    try:
+        mean_results_df.to_excel("results.xlsx", index=False, engine='openpyxl')
+        confirmation_message = f"✅ Successfully exported mean results to 'results.xlsx' at {datetime.now().strftime('%H:%M:%S')}."
+    except Exception as e:
+        confirmation_message = f"❌ Error exporting to Excel: {e}. Please ensure 'openpyxl' is installed (`pip install openpyxl`)."
+
+
+    # --- Create the graphs ---
     fig_employees = px.line(simulation_df, x='Date', y=hired_total_columns, title='Forecasted Hired Employees by Role (with Mean)')
     colors = px.colors.qualitative.Plotly
     for i, col in enumerate(hired_total_columns):
@@ -335,6 +344,8 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     fig_projects.update_layout(legend_title_text='Project Type', yaxis_title='Number of Active Projects', barmode='stack')
 
     return html.Div([
+        # --- ADDED: Display the confirmation message ---
+        html.Div(confirmation_message, style={'textAlign': 'center', 'color': 'green' if 'Successfully' in confirmation_message else 'red', 'marginBottom': '15px', 'fontWeight': 'bold'}),
         dcc.Graph(id='employees-graph', figure=fig_employees),
         html.Hr(),
         dcc.Graph(id='projects-graph', figure=fig_projects)
