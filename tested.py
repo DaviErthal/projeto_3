@@ -3,7 +3,7 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Added a "Personalized" scenario option with user inputs.
+# NEW: Added an advanced settings section to customize project durations.
 
 import math
 import random
@@ -62,16 +62,16 @@ SCENARIOS = {
 
 
 class Project:
-    def __init__(self, id, p_type, p_scale, start_month):
+    def __init__(self, id, p_type, p_scale, start_month, project_durations):
         self.id, self.p_type, self.p_scale, self.start_month = id, p_type, p_scale, start_month
-        self.duration = PROJECT_DURATIONS[p_type][p_scale]
+        self.duration = project_durations[p_type][p_scale]
         self.end_month = start_month + self.duration - 1
     def is_active_in_month(self, month):
         return self.start_month <= month <= self.end_month
     def get_staffing_needs(self):
         return STAFFING_COEFFICIENTS.get(self.p_type, {})
 
-def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rate, simulation_duration_months, start_date_str='2026-01-01'):
+def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rate, simulation_duration_months, project_durations, start_date_str='2026-01-01'):
     project_pipeline, project_id_counter, results_data = [], 0, []
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
@@ -87,12 +87,12 @@ def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rat
                 num_to_add = yearly_count // 12 + (1 if month_within_year < yearly_count % 12 else 0)
                 for _ in range(num_to_add):
                     project_id_counter += 1
-                    project_pipeline.append(Project(f"PA_{p_scale}_{project_id_counter}", "Pre-analysis", p_scale, month))
+                    project_pipeline.append(Project(f"PA_{p_scale}_{project_id_counter}", "Pre-analysis", p_scale, month, project_durations))
             for p_scale, yearly_count in yearly_aw_base_counts.items():
                 num_to_add = yearly_count // 12 + (1 if month_within_year < yearly_count % 12 else 0)
                 for _ in range(num_to_add):
                     project_id_counter += 1
-                    project_pipeline.append(Project(f"AW-base_{p_scale}_{project_id_counter}", "Actual Work", p_scale, month))
+                    project_pipeline.append(Project(f"AW-base_{p_scale}_{project_id_counter}", "Actual Work", p_scale, month, project_durations))
 
         converted_this_month = 0
         finished_pa_projects = [p for p in project_pipeline if p.p_type == "Pre-analysis" and p.end_month == month - 1]
@@ -100,7 +100,7 @@ def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rat
             if random.random() < conversion_rate:
                 converted_this_month += 1
                 project_id_counter += 1
-                project_pipeline.append(Project(f"AW-Conv_{proj.p_scale}_{project_id_counter}", "Actual Work", proj.p_scale, month))
+                project_pipeline.append(Project(f"AW-Conv_{proj.p_scale}_{project_id_counter}", "Actual Work", proj.p_scale, month, project_durations))
 
         monthly_demand = {role: {"Small": 0, "Medium": 0, "Large": 0} for role in roles}
         active_project_counts = {"PA Small": 0, "PA Medium": 0, "PA Large": 0, "AW Small": 0, "AW Medium": 0, "AW Large": 0}
@@ -131,7 +131,7 @@ def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rat
 # --- PHASE 2: DASH APPLICATION SETUP ---
 
 # Initialize the Dash app
-app = dash.Dash(__name__)
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
 server = app.server # Expose server for deployment
 
 # --- ADDED: Helper function to create input fields for the personalized scenario ---
@@ -193,7 +193,7 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
                 dcc.Input(
                     id='duration-input',
                     type='number',
-                    value=36,
+                    value=24,
                     min=12,
                     step=1
                 )
@@ -205,7 +205,30 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
             html.H3("Enter Personalized Scenario Data", style={'textAlign': 'center'}),
             create_year_inputs(1),
             create_year_inputs(2),
-        ])
+        ]),
+        
+        # --- ADDED: Collapsible section for advanced settings ---
+        html.Details([
+            html.Summary('Advanced Settings (Customize Durations)'),
+            html.Div(style={'marginTop': '10px'}, children=[
+                html.Div([
+                    html.Label("PA Small Duration:"),
+                    dcc.Input(id='dur-pa-small', type='number', value=PROJECT_DURATIONS["Pre-analysis"]["Small"], style={'width': '80px'}),
+                    html.Label("PA Medium Duration:"),
+                    dcc.Input(id='dur-pa-medium', type='number', value=PROJECT_DURATIONS["Pre-analysis"]["Medium"], style={'width': '80px'}),
+                    html.Label("PA Large Duration:"),
+                    dcc.Input(id='dur-pa-large', type='number', value=PROJECT_DURATIONS["Pre-analysis"]["Large"], style={'width': '80px'}),
+                ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px'}),
+                html.Div([
+                    html.Label("AW Small Duration:"),
+                    dcc.Input(id='dur-aw-small', type='number', value=PROJECT_DURATIONS["Actual Work"]["Small"], style={'width': '80px'}),
+                    html.Label("AW Medium Duration:"),
+                    dcc.Input(id='dur-aw-medium', type='number', value=PROJECT_DURATIONS["Actual Work"]["Medium"], style={'width': '80px'}),
+                    html.Label("AW Large Duration:"),
+                    dcc.Input(id='dur-aw-large', type='number', value=PROJECT_DURATIONS["Actual Work"]["Large"], style={'width': '80px'}),
+                ], style={'display': 'flex', 'justifyContent': 'space-around'}),
+            ])
+        ], style={'marginTop': '20px'})
     ]),
 
     # Run Button
@@ -241,11 +264,15 @@ def toggle_personalized_inputs(scenario_name):
         State('aw-small-y1', 'value'), State('aw-medium-y1', 'value'), State('aw-large-y1', 'value'),
         State('pa-small-y2', 'value'), State('pa-medium-y2', 'value'), State('pa-large-y2', 'value'),
         State('aw-small-y2', 'value'), State('aw-medium-y2', 'value'), State('aw-large-y2', 'value'),
+        # --- ADDED: States for custom duration inputs ---
+        State('dur-pa-small', 'value'), State('dur-pa-medium', 'value'), State('dur-pa-large', 'value'),
+        State('dur-aw-small', 'value'), State('dur-aw-medium', 'value'), State('dur-aw-large', 'value'),
     ]
 )
 def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
                      pa_s1, pa_m1, pa_l1, aw_s1, aw_m1, aw_l1,
-                     pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2):
+                     pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2,
+                     dur_pa_s, dur_pa_m, dur_pa_l, dur_aw_s, dur_aw_m, dur_aw_l):
     if n_clicks == 0:
         return html.Div("Please set your parameters and click 'Run Simulation'.", style={'textAlign': 'center', 'padding': '50px', 'fontSize': '18px'})
 
@@ -266,13 +293,20 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         pa_projects = scenario['pa']
         aw_projects = scenario['aw']
     
+    # --- ADDED: Create the durations dictionary from user inputs ---
+    custom_durations = {
+        "Pre-analysis": {"Small": dur_pa_s, "Medium": dur_pa_m, "Large": dur_pa_l},
+        "Actual Work": {"Small": dur_aw_s, "Medium": dur_aw_m, "Large": dur_aw_l}
+    }
+    
     conversion_rate = conversion_rate_percent / 100.0
 
     simulation_df = run_simulation(
         all_years_pa_counts=pa_projects,
         all_years_aw_base_counts=aw_projects,
         conversion_rate=conversion_rate,
-        simulation_duration_months=duration
+        simulation_duration_months=duration,
+        project_durations=custom_durations # Pass the custom durations to the simulation
     )
 
     # --- Create the graphs (logic remains the same) ---
