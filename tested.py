@@ -3,7 +3,7 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Added functionality to export mean results to an Excel file on simulation run.
+# NEW: Added a rounded-up mean column to the Excel export.
 
 import math
 import random
@@ -304,19 +304,26 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         staffing_coefficients=custom_coeffs 
     )
 
-    # --- ADDED: EXPORT TO EXCEL ---
+    # --- MODIFIED: EXPORT TO EXCEL ---
     hired_total_columns = [col for col in simulation_df.columns if 'Hired (Total)' in col]
     mean_data = []
     for col in hired_total_columns:
         role_name = col.replace(" Hired (Total)", "")
         mean_value = simulation_df[col].mean()
-        mean_data.append({"Role": role_name, "Mean Hired Emplyees": mean_value})
+        # Add both the mean and the rounded-up mean
+        mean_data.append({
+            "Role": role_name,
+            "Mean Hired Employees": mean_value,
+            "Mean Hired Employees Rounded Up": math.ceil(mean_value)
+        })
     
     mean_results_df = pd.DataFrame(mean_data)
+    # Ensure the rounded up column is an integer for clean formatting
+    mean_results_df["Mean Hired Employees Rounded Up"] = mean_results_df["Mean Hired Employees Rounded Up"].astype(int)
     
     try:
-        mean_results_df.to_csv("results.csv", index=False) #, engine='openpyxl')
-        confirmation_message = f"✅ Successfully exported mean results to 'results.csv' at {datetime.now().strftime('%H:%M:%S')}."
+        mean_results_df.to_excel("results.xlsx", index=False, engine='openpyxl')
+        confirmation_message = f"✅ Successfully exported mean results to 'results.xlsx' at {datetime.now().strftime('%H:%M:%S')}."
     except Exception as e:
         confirmation_message = f"❌ Error exporting to Excel: {e}. Please ensure 'openpyxl' is installed (`pip install openpyxl`)."
 
