@@ -3,7 +3,8 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Added a rounded-up mean column to the Excel export.
+# NEW: Added cost analysis features, including salary inputs, a monthly cost graph,
+# and a total cost summary.
 
 import math
 import random
@@ -40,6 +41,17 @@ STAFFING_COEFFICIENTS = {
     }
 }
 
+# --- Default Monthly Salaries ---
+DEFAULT_SALARIES = {
+    "Analyst": 10312,
+    "Technical": 3100,
+    "Project Manager": 13000,
+    "Tax Engineer": 10312,
+    "Tax Technical": 3100,
+    "Planning Engineer": 10312
+}
+
+
 # --- Data Scenarios ---
 SCENARIOS = {
     "Lote 1": {
@@ -57,7 +69,7 @@ SCENARIOS = {
     "Personalized": {}
 }
 
-
+# --- Project Class Definition ---
 class Project:
     def __init__(self, id, p_type, p_scale, start_month, project_durations, staffing_coefficients):
         self.id, self.p_type, self.p_scale, self.start_month = id, p_type, p_scale, start_month
@@ -69,12 +81,13 @@ class Project:
     def get_staffing_needs(self):
         return self.staffing_coefficients.get(self.p_type, {})
 
+# --- Function to run the simulation ---
 def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rate, simulation_duration_months, project_durations, staffing_coefficients, start_date_str='2026-01-01'):
     project_pipeline, project_id_counter, results_data = [], 0, []
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
     scales = ["Small", "Medium", "Large"]
-
+    # Initialize the project pipeline with projects based on the yearly counts
     for month in range(1, simulation_duration_months + 1):
         current_year_index = (month - 1) // 12
         if current_year_index < len(all_years_pa_counts):
@@ -168,6 +181,16 @@ def create_coefficient_inputs():
         inputs.append(html.Div(role_inputs, style={'borderTop': '1px solid #eee', 'paddingTop': '10px'}))
     return html.Div(inputs)
 
+# --- Helper function to create salary inputs ---
+def create_cost_inputs():
+    roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
+    inputs = []
+    for role in roles:
+        sanitized_role = role.replace(" ", "").lower()
+        inputs.append(html.Label(f"{role} Salary:"))
+        inputs.append(dcc.Input(id=f'salary-{sanitized_role}', type='number', value=DEFAULT_SALARIES.get(role, 0), style={'width': '100px', 'marginRight': '20px'}))
+    return html.Div(inputs, style={'display': 'flex', 'justifyContent': 'space-around', 'flexWrap': 'wrap'})
+
 # Define the layout of the application
 app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px'}, children=[
     html.H1("Workforce Planning & Optimization Dashboard", style={'textAlign': 'center', 'color': '#333'}),
@@ -216,6 +239,11 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
                 html.Details([
                     html.Summary('Customize Staffing Coefficients'),
                     html.Div(create_coefficient_inputs(), style={'marginTop': '10px'})
+                ]),
+                # --- ADDED: Collapsible section for cost inputs ---
+                html.Details([
+                    html.Summary('Customize Costs (Monthly Salary)'),
+                    html.Div(create_cost_inputs(), style={'marginTop': '10px'})
                 ])
             ])
         ], style={'marginTop': '20px'})
@@ -263,15 +291,22 @@ def toggle_personalized_inputs(scenario_name):
         State('coef-taxtechnical-aw-small', 'value'), State('coef-taxtechnical-aw-medium', 'value'), State('coef-taxtechnical-aw-large', 'value'),
         State('coef-planningengineer-pa-small', 'value'), State('coef-planningengineer-pa-medium', 'value'), State('coef-planningengineer-pa-large', 'value'),
         State('coef-planningengineer-aw-small', 'value'), State('coef-planningengineer-aw-medium', 'value'), State('coef-planningengineer-aw-large', 'value'),
+        # --- States for salary inputs ---
+        State('salary-analyst', 'value'), State('salary-technical', 'value'), State('salary-projectmanager', 'value'),
+        State('salary-taxengineer', 'value'), State('salary-taxtechnical', 'value'), State('salary-planningengineer', 'value'),
     ]
 )
 def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
                      pa_s1, pa_m1, pa_l1, aw_s1, aw_m1, aw_l1,
                      pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2,
                      dur_pa_s, dur_pa_m, dur_pa_l, dur_aw_s, dur_aw_m, dur_aw_l,
-                     *coeffs): 
+                     *coeffs_and_salaries): 
     if n_clicks == 0:
         return html.Div("Please set your parameters and click 'Run Simulation'.", style={'textAlign': 'center', 'padding': '50px', 'fontSize': '18px'})
+
+    # Separate coeffs and salaries from the combined tuple
+    coeffs = coeffs_and_salaries[:36]
+    salaries_tuple = coeffs_and_salaries[36:]
 
     if scenario_name == 'Personalized':
         pa_projects = [{"Small": pa_s1, "Medium": pa_m1, "Large": pa_l1}, {"Small": pa_s2, "Medium": pa_m2, "Large": pa_l2}]
@@ -293,6 +328,9 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         custom_coeffs["Actual Work"][role] = {"Small": coeffs[c_idx+3], "Medium": coeffs[c_idx+4], "Large": coeffs[c_idx+5]}
         c_idx += 6
     
+    # --- Reconstruct salaries dictionary ---
+    salaries = {role: salaries_tuple[i] for i, role in enumerate(roles)}
+
     conversion_rate = conversion_rate_percent / 100.0
 
     simulation_df = run_simulation(
@@ -304,13 +342,20 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         staffing_coefficients=custom_coeffs 
     )
 
-    # --- MODIFIED: EXPORT TO EXCEL ---
+    # --- Cost Calculation ---
+    simulation_df['Total Monthly Cost'] = 0
+    for role in roles:
+        simulation_df['Total Monthly Cost'] += simulation_df[f'{role} Hired (Total)'] * salaries[role]
+    
+    total_project_cost = simulation_df['Total Monthly Cost'].sum()
+
+
+    # --- EXPORT TO EXCEL ---
     hired_total_columns = [col for col in simulation_df.columns if 'Hired (Total)' in col]
     mean_data = []
     for col in hired_total_columns:
         role_name = col.replace(" Hired (Total)", "")
         mean_value = simulation_df[col].mean()
-        # Add both the mean and the rounded-up mean
         mean_data.append({
             "Role": role_name,
             "Mean Hired Employees": mean_value,
@@ -318,7 +363,6 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         })
     
     mean_results_df = pd.DataFrame(mean_data)
-    # Ensure the rounded up column is an integer for clean formatting
     mean_results_df["Mean Hired Employees Rounded Up"] = mean_results_df["Mean Hired Employees Rounded Up"].astype(int)
     
     try:
@@ -342,10 +386,23 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     active_project_columns = ["PA Small", "PA Medium", "PA Large", "AW Small", "AW Medium", "AW Large"]
     fig_projects = px.bar(simulation_df, x='Date', y=active_project_columns, title='Active Projects by Type and Scale Over Time')
     fig_projects.update_layout(legend_title_text='Project Type', yaxis_title='Number of Active Projects', barmode='stack')
+    
+    # --- Cost Graph ---
+    fig_cost = px.area(simulation_df, x='Date', y='Total Monthly Cost', title='Total Monthly Payroll Cost Over Time')
+    fig_cost.update_layout(yaxis_title='Total Cost ($)', yaxis_tickprefix='$')
+
 
     return html.Div([
-        # --- ADDED: Display the confirmation message ---
         html.Div(confirmation_message, style={'textAlign': 'center', 'color': 'green' if 'Successfully' in confirmation_message else 'red', 'marginBottom': '15px', 'fontWeight': 'bold'}),
+        
+        # --- Total Cost Summary Card ---
+        html.Div([
+            html.H3("Total Simulation Cost", style={'textAlign': 'center', 'margin': '0'}),
+            html.P(f"${total_project_cost:,.2f}", style={'textAlign': 'center', 'fontSize': '28px', 'fontWeight': 'bold', 'color': '#007BFF', 'margin': '0'})
+        ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'marginBottom': '20px'}),
+        
+        dcc.Graph(id='cost-graph', figure=fig_cost),
+        html.Hr(),
         dcc.Graph(id='employees-graph', figure=fig_employees),
         html.Hr(),
         dcc.Graph(id='projects-graph', figure=fig_projects)

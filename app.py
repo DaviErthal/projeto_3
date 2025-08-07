@@ -3,8 +3,7 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Added cost analysis features, including salary inputs, a monthly cost graph,
-# and a total cost summary.
+# NEW: Fixed callback ID mismatch for revenue inputs.
 
 import math
 import random
@@ -41,16 +40,17 @@ STAFFING_COEFFICIENTS = {
     }
 }
 
-# --- Default Monthly Salaries ---
+# Default Monthly Salaries
 DEFAULT_SALARIES = {
-    "Analyst": 5000,
-    "Technical": 6000,
-    "Project Manager": 9000,
-    "Tax Engineer": 8500,
-    "Tax Technical": 7000,
-    "Planning Engineer": 8000
+    "Analyst": 5000, "Technical": 6000, "Project Manager": 9000,
+    "Tax Engineer": 8500, "Tax Technical": 7000, "Planning Engineer": 8000
 }
 
+# --- ADDED: Default Monthly Revenues ---
+DEFAULT_REVENUES = {
+    "Pre-analysis": {"Small": 1000, "Medium": 2000, "Large": 4000},
+    "Actual Work": {"Small": 15000, "Medium": 30000, "Large": 50000}
+}
 
 # --- Data Scenarios ---
 SCENARIOS = {
@@ -69,7 +69,7 @@ SCENARIOS = {
     "Personalized": {}
 }
 
-# --- Project Class Definition ---
+
 class Project:
     def __init__(self, id, p_type, p_scale, start_month, project_durations, staffing_coefficients):
         self.id, self.p_type, self.p_scale, self.start_month = id, p_type, p_scale, start_month
@@ -81,13 +81,12 @@ class Project:
     def get_staffing_needs(self):
         return self.staffing_coefficients.get(self.p_type, {})
 
-# --- Function to run the simulation ---
 def run_simulation(all_years_pa_counts, all_years_aw_base_counts, conversion_rate, simulation_duration_months, project_durations, staffing_coefficients, start_date_str='2026-01-01'):
     project_pipeline, project_id_counter, results_data = [], 0, []
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
     scales = ["Small", "Medium", "Large"]
-    # Initialize the project pipeline with projects based on the yearly counts
+
     for month in range(1, simulation_duration_months + 1):
         current_year_index = (month - 1) // 12
         if current_year_index < len(all_years_pa_counts):
@@ -181,7 +180,6 @@ def create_coefficient_inputs():
         inputs.append(html.Div(role_inputs, style={'borderTop': '1px solid #eee', 'paddingTop': '10px'}))
     return html.Div(inputs)
 
-# --- Helper function to create salary inputs ---
 def create_cost_inputs():
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
     inputs = []
@@ -190,6 +188,21 @@ def create_cost_inputs():
         inputs.append(html.Label(f"{role} Salary:"))
         inputs.append(dcc.Input(id=f'salary-{sanitized_role}', type='number', value=DEFAULT_SALARIES.get(role, 0), style={'width': '100px', 'marginRight': '20px'}))
     return html.Div(inputs, style={'display': 'flex', 'justifyContent': 'space-around', 'flexWrap': 'wrap'})
+
+def create_revenue_inputs():
+    inputs = []
+    for p_type in ["Pre-analysis", "Actual Work"]:
+        type_inputs = [html.H5(p_type, style={'textAlign': 'center', 'marginTop': '15px'})]
+        div_children = []
+        for scale in ["Small", "Medium", "Large"]:
+            # --- FIXED: Sanitize the type string correctly by removing spaces ---
+            sanitized_type = p_type.replace("-", "").replace(" ", "").lower()
+            div_children.append(html.Label(f"{scale} Revenue:"))
+            div_children.append(dcc.Input(id=f'revenue-{sanitized_type}-{scale.lower()}', type='number', value=DEFAULT_REVENUES[p_type][scale], style={'width': '100px', 'marginRight': '20px'}))
+        type_inputs.append(html.Div(div_children, style={'display': 'flex', 'justifyContent': 'space-around'}))
+        inputs.append(html.Div(type_inputs))
+    return html.Div(inputs)
+
 
 # Define the layout of the application
 app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px'}, children=[
@@ -240,10 +253,13 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
                     html.Summary('Customize Staffing Coefficients'),
                     html.Div(create_coefficient_inputs(), style={'marginTop': '10px'})
                 ]),
-                # --- ADDED: Collapsible section for cost inputs ---
                 html.Details([
                     html.Summary('Customize Costs (Monthly Salary)'),
                     html.Div(create_cost_inputs(), style={'marginTop': '10px'})
+                ]),
+                html.Details([
+                    html.Summary('Customize Revenues (Per Project/Month)'),
+                    html.Div(create_revenue_inputs(), style={'marginTop': '10px'})
                 ])
             ])
         ], style={'marginTop': '20px'})
@@ -291,22 +307,25 @@ def toggle_personalized_inputs(scenario_name):
         State('coef-taxtechnical-aw-small', 'value'), State('coef-taxtechnical-aw-medium', 'value'), State('coef-taxtechnical-aw-large', 'value'),
         State('coef-planningengineer-pa-small', 'value'), State('coef-planningengineer-pa-medium', 'value'), State('coef-planningengineer-pa-large', 'value'),
         State('coef-planningengineer-aw-small', 'value'), State('coef-planningengineer-aw-medium', 'value'), State('coef-planningengineer-aw-large', 'value'),
-        # --- States for salary inputs ---
+        # Salary inputs
         State('salary-analyst', 'value'), State('salary-technical', 'value'), State('salary-projectmanager', 'value'),
         State('salary-taxengineer', 'value'), State('salary-taxtechnical', 'value'), State('salary-planningengineer', 'value'),
+        # --- FIXED: States for revenue inputs now use sanitized IDs ---
+        State('revenue-preanalysis-small', 'value'), State('revenue-preanalysis-medium', 'value'), State('revenue-preanalysis-large', 'value'),
+        State('revenue-actualwork-small', 'value'), State('revenue-actualwork-medium', 'value'), State('revenue-actualwork-large', 'value'),
     ]
 )
 def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
                      pa_s1, pa_m1, pa_l1, aw_s1, aw_m1, aw_l1,
                      pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2,
                      dur_pa_s, dur_pa_m, dur_pa_l, dur_aw_s, dur_aw_m, dur_aw_l,
-                     *coeffs_and_salaries): 
+                     *args): 
     if n_clicks == 0:
         return html.Div("Please set your parameters and click 'Run Simulation'.", style={'textAlign': 'center', 'padding': '50px', 'fontSize': '18px'})
 
-    # Separate coeffs and salaries from the combined tuple
-    coeffs = coeffs_and_salaries[:36]
-    salaries_tuple = coeffs_and_salaries[36:]
+    coeffs = args[:36]
+    salaries_tuple = args[36:42]
+    revenues_tuple = args[42:]
 
     if scenario_name == 'Personalized':
         pa_projects = [{"Small": pa_s1, "Medium": pa_m1, "Large": pa_l1}, {"Small": pa_s2, "Medium": pa_m2, "Large": pa_l2}]
@@ -328,8 +347,12 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         custom_coeffs["Actual Work"][role] = {"Small": coeffs[c_idx+3], "Medium": coeffs[c_idx+4], "Large": coeffs[c_idx+5]}
         c_idx += 6
     
-    # --- Reconstruct salaries dictionary ---
     salaries = {role: salaries_tuple[i] for i, role in enumerate(roles)}
+    
+    custom_revenues = {
+        "Pre-analysis": {"Small": revenues_tuple[0], "Medium": revenues_tuple[1], "Large": revenues_tuple[2]},
+        "Actual Work": {"Small": revenues_tuple[3], "Medium": revenues_tuple[4], "Large": revenues_tuple[5]}
+    }
 
     conversion_rate = conversion_rate_percent / 100.0
 
@@ -342,15 +365,22 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         staffing_coefficients=custom_coeffs 
     )
 
-    # --- Cost Calculation ---
     simulation_df['Total Monthly Cost'] = 0
     for role in roles:
         simulation_df['Total Monthly Cost'] += simulation_df[f'{role} Hired (Total)'] * salaries[role]
     
+    revenue_map = {
+        "PA Small": custom_revenues["Pre-analysis"]["Small"], "PA Medium": custom_revenues["Pre-analysis"]["Medium"], "PA Large": custom_revenues["Pre-analysis"]["Large"],
+        "AW Small": custom_revenues["Actual Work"]["Small"], "AW Medium": custom_revenues["Actual Work"]["Medium"], "AW Large": custom_revenues["Actual Work"]["Large"]
+    }
+    shifted_projects = simulation_df[revenue_map.keys()].shift(1).fillna(0)
+    simulation_df['Monthly Revenue'] = (shifted_projects * pd.Series(revenue_map)).sum(axis=1)
+    
+    simulation_df['Cash Flow'] = simulation_df['Monthly Revenue'] - simulation_df['Total Monthly Cost']
     total_project_cost = simulation_df['Total Monthly Cost'].sum()
+    total_project_revenue = simulation_df['Monthly Revenue'].sum()
+    total_cash_flow = simulation_df['Cash Flow'].sum()
 
-
-    # --- EXPORT TO EXCEL ---
     hired_total_columns = [col for col in simulation_df.columns if 'Hired (Total)' in col]
     mean_data = []
     for col in hired_total_columns:
@@ -371,8 +401,6 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     except Exception as e:
         confirmation_message = f"❌ Error exporting to Excel: {e}. Please ensure 'openpyxl' is installed (`pip install openpyxl`)."
 
-
-    # --- Create the graphs ---
     fig_employees = px.line(simulation_df, x='Date', y=hired_total_columns, title='Forecasted Hired Employees by Role (with Mean)')
     colors = px.colors.qualitative.Plotly
     for i, col in enumerate(hired_total_columns):
@@ -387,21 +415,38 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     fig_projects = px.bar(simulation_df, x='Date', y=active_project_columns, title='Active Projects by Type and Scale Over Time')
     fig_projects.update_layout(legend_title_text='Project Type', yaxis_title='Number of Active Projects', barmode='stack')
     
-    # --- Cost Graph ---
-    fig_cost = px.area(simulation_df, x='Date', y='Total Monthly Cost', title='Total Monthly Payroll Cost Over Time')
-    fig_cost.update_layout(yaxis_title='Total Cost ($)', yaxis_tickprefix='$')
-
+    fig_cash_flow = go.Figure()
+    fig_cash_flow.add_trace(go.Bar(
+        x=simulation_df['Date'],
+        y=simulation_df['Cash Flow'],
+        marker_color=['#2ca02c' if v >= 0 else '#d62728' for v in simulation_df['Cash Flow']],
+        name='Monthly Cash Flow'
+    ))
+    fig_cash_flow.update_layout(
+        title='Monthly Cash Flow (Revenue - Cost)',
+        yaxis_title='Cash Flow ($)',
+        yaxis_tickprefix='$'
+    )
 
     return html.Div([
         html.Div(confirmation_message, style={'textAlign': 'center', 'color': 'green' if 'Successfully' in confirmation_message else 'red', 'marginBottom': '15px', 'fontWeight': 'bold'}),
         
-        # --- Total Cost Summary Card ---
-        html.Div([
-            html.H3("Total Simulation Cost", style={'textAlign': 'center', 'margin': '0'}),
-            html.P(f"${total_project_cost:,.2f}", style={'textAlign': 'center', 'fontSize': '28px', 'fontWeight': 'bold', 'color': '#007BFF', 'margin': '0'})
-        ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'marginBottom': '20px'}),
+        html.Div(style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '20px'}, children=[
+            html.Div([
+                html.H4("Total Revenue", style={'textAlign': 'center', 'margin': '0'}),
+                html.P(f"${total_project_revenue:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#2ca02c', 'margin': '0'})
+            ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
+            html.Div([
+                html.H4("Total Cost", style={'textAlign': 'center', 'margin': '0'}),
+                html.P(f"${total_project_cost:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#d62728', 'margin': '0'})
+            ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
+            html.Div([
+                html.H4("Net Cash Flow", style={'textAlign': 'center', 'margin': '0'}),
+                html.P(f"${total_cash_flow:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#007BFF', 'margin': '0'})
+            ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
+        ]),
         
-        dcc.Graph(id='cost-graph', figure=fig_cost),
+        dcc.Graph(id='cash-flow-graph', figure=fig_cash_flow),
         html.Hr(),
         dcc.Graph(id='employees-graph', figure=fig_employees),
         html.Hr(),
