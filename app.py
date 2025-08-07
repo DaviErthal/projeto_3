@@ -3,7 +3,9 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW: Fixed callback ID mismatch for revenue inputs.
+# NEW:
+# 1. Added Monte Carlo simulation for risk analysis on Project Durations.
+# 2. Added a new confidence interval graph for cumulative cash flow.
 
 import math
 import random
@@ -11,22 +13,23 @@ import pandas as pd
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np
 
 # You will need to install dash, pandas, plotly, and openpyxl
-# pip install dash pandas plotly openpyxl
+# pip install dash pandas plotly openpyxl numpy
 import dash
-from dash import dcc, html
+from dash import dcc, html, ALL
 from dash.dependencies import Input, Output, State
 
-# --- PHASE 1: SIMULATION LOGIC (Copied from our notebook) ---
+# --- PHASE 1: SIMULATION LOGIC ---
 
-# Rule 1: Default Project Durations in months
+# Default Project Durations in months
 PROJECT_DURATIONS = {
     "Pre-analysis": { "Small": 3, "Medium": 6, "Large": 8 },
     "Actual Work": { "Small": 11, "Medium": 20, "Large": 25 }
 }
 
-# Rule 2: Default Staffing Coefficients
+# Default Staffing Coefficients
 STAFFING_COEFFICIENTS = {
     "Pre-analysis": {
         "Analyst": {"Small": 1/20, "Medium": 1/12, "Large": 1/6},
@@ -42,17 +45,18 @@ STAFFING_COEFFICIENTS = {
 
 # Default Monthly Salaries
 DEFAULT_SALARIES = {
-    "Analyst": 5000, "Technical": 6000, "Project Manager": 9000,
-    "Tax Engineer": 8500, "Tax Technical": 7000, "Planning Engineer": 8000
+    "Analyst": 16500, "Technical": 3100, "Project Manager": 18000,
+    "Tax Engineer": 16500, "Tax Technical": 3100, "Planning Engineer": 16500
 }
+DEFAULT_MEAN_EMPLOYEE_COST = 500
 
-# --- ADDED: Default Monthly Revenues ---
+# Default Monthly Revenues
 DEFAULT_REVENUES = {
-    "Pre-analysis": {"Small": 1000, "Medium": 2000, "Large": 4000},
-    "Actual Work": {"Small": 15000, "Medium": 30000, "Large": 50000}
+    "Pre-analysis": {"Small": 4600, "Medium": 6250, "Large": 11828},
+    "Actual Work": {"Small": 10700, "Medium": 39200, "Large": 68600}
 }
 
-# --- Data Scenarios ---
+# --- Data Scenarios (Hardcoded for 2 years) ---
 SCENARIOS = {
     "Lote 1": {
         "pa": [{"Small": 44, "Medium": 64, "Large": 12}, {"Small": 26, "Medium": 38, "Large": 7}],
@@ -149,14 +153,14 @@ def create_year_inputs(year):
         html.H4(f"Year {year}", style={'marginTop': '20px'}),
         html.Div([
             html.Div([
-                html.Label("PA Small:"), dcc.Input(id=f'pa-small-y{year}', type='number', value=0, style={'width': '80px'}),
-                html.Label("PA Medium:"), dcc.Input(id=f'pa-medium-y{year}', type='number', value=0, style={'width': '80px'}),
-                html.Label("PA Large:"), dcc.Input(id=f'pa-large-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Small:"), dcc.Input(id={'type': 'pa-small-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Medium:"), dcc.Input(id={'type': 'pa-medium-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Large:"), dcc.Input(id={'type': 'pa-large-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
             ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px'}),
             html.Div([
-                html.Label("AW Small:"), dcc.Input(id=f'aw-small-y{year}', type='number', value=0, style={'width': '80px'}),
-                html.Label("AW Medium:"), dcc.Input(id=f'aw-medium-y{year}', type='number', value=0, style={'width': '80px'}),
-                html.Label("AW Large:"), dcc.Input(id=f'aw-large-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Small:"), dcc.Input(id={'type': 'aw-small-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Medium:"), dcc.Input(id={'type': 'aw-medium-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Large:"), dcc.Input(id={'type': 'aw-large-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
             ], style={'display': 'flex', 'justifyContent': 'space-around'}),
         ])
     ])
@@ -182,12 +186,19 @@ def create_coefficient_inputs():
 
 def create_cost_inputs():
     roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
-    inputs = []
+    inputs = [
+        html.Div([
+            html.Label("Mean Employee Overhead Cost:"),
+            dcc.Input(id='mean-employee-cost', type='number', value=DEFAULT_MEAN_EMPLOYEE_COST, style={'width': '100px'})
+        ], style={'textAlign': 'center', 'marginBottom': '20px'})
+    ]
+    salary_inputs = []
     for role in roles:
         sanitized_role = role.replace(" ", "").lower()
-        inputs.append(html.Label(f"{role} Salary:"))
-        inputs.append(dcc.Input(id=f'salary-{sanitized_role}', type='number', value=DEFAULT_SALARIES.get(role, 0), style={'width': '100px', 'marginRight': '20px'}))
-    return html.Div(inputs, style={'display': 'flex', 'justifyContent': 'space-around', 'flexWrap': 'wrap'})
+        salary_inputs.append(html.Label(f"{role} Salary:"))
+        salary_inputs.append(dcc.Input(id=f'salary-{sanitized_role}', type='number', value=DEFAULT_SALARIES.get(role, 0), style={'width': '100px', 'marginRight': '20px'}))
+    inputs.append(html.Div(salary_inputs, style={'display': 'flex', 'justifyContent': 'space-around', 'flexWrap': 'wrap'}))
+    return html.Div(inputs)
 
 def create_revenue_inputs():
     inputs = []
@@ -195,13 +206,29 @@ def create_revenue_inputs():
         type_inputs = [html.H5(p_type, style={'textAlign': 'center', 'marginTop': '15px'})]
         div_children = []
         for scale in ["Small", "Medium", "Large"]:
-            # --- FIXED: Sanitize the type string correctly by removing spaces ---
             sanitized_type = p_type.replace("-", "").replace(" ", "").lower()
             div_children.append(html.Label(f"{scale} Revenue:"))
             div_children.append(dcc.Input(id=f'revenue-{sanitized_type}-{scale.lower()}', type='number', value=DEFAULT_REVENUES[p_type][scale], style={'width': '100px', 'marginRight': '20px'}))
         type_inputs.append(html.Div(div_children, style={'display': 'flex', 'justifyContent': 'space-around'}))
         inputs.append(html.Div(type_inputs))
     return html.Div(inputs)
+
+def create_recurring_entry_inputs():
+    rows = []
+    for i in range(1, 4):
+        rows.append(html.Div([
+            dcc.Input(id={'type': 'entry-name', 'index': i}, type='text', placeholder=f'Entry #{i} Name', style={'width': '25%'}),
+            dcc.Input(id={'type': 'entry-start', 'index': i}, type='text', placeholder='Start (YYYY-MM)', style={'width': '20%'}),
+            dcc.Input(id={'type': 'entry-end', 'index': i}, type='text', placeholder='End (YYYY-MM)', style={'width': '20%'}),
+            dcc.Input(id={'type': 'entry-value', 'index': i}, type='number', placeholder='Monthly Value', style={'width': '15%'}),
+            dcc.RadioItems(
+                id={'type': 'entry-type', 'index': i},
+                options=[{'label': 'Expense', 'value': 'expense'}, {'label': 'Revenue', 'value': 'revenue'}],
+                value='expense',
+                labelStyle={'display': 'inline-block', 'marginRight': '10px'}
+            )
+        ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px', 'alignItems': 'center'}))
+    return html.Div(rows)
 
 
 # Define the layout of the application
@@ -228,7 +255,11 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
         
         html.Div(id='personalized-inputs-container', style={'display': 'none', 'marginTop': '20px', 'borderTop': '1px solid #ccc', 'paddingTop': '20px'}, children=[
             html.H3("Enter Personalized Scenario Data", style={'textAlign': 'center'}),
-            create_year_inputs(1), create_year_inputs(2),
+            html.Div([
+                html.Label("Number of Years to Plan:"),
+                dcc.Input(id='num-years-input', type='number', value=2, min=1, max=10, step=1)
+            ], style={'textAlign': 'center', 'marginBottom': '10px'}),
+            html.Div(id='dynamic-year-inputs-container') # Container for dynamic year inputs
         ]),
         
         html.Details([
@@ -254,15 +285,29 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
                     html.Div(create_coefficient_inputs(), style={'marginTop': '10px'})
                 ]),
                 html.Details([
-                    html.Summary('Customize Costs (Monthly Salary)'),
+                    html.Summary('Customize Costs'),
                     html.Div(create_cost_inputs(), style={'marginTop': '10px'})
                 ]),
                 html.Details([
                     html.Summary('Customize Revenues (Per Project/Month)'),
                     html.Div(create_revenue_inputs(), style={'marginTop': '10px'})
+                ]),
+                html.Details([
+                    html.Summary('Add Recurring Entries (Revenues/Expenses)'),
+                    html.Div(create_recurring_entry_inputs(), style={'marginTop': '10px'})
                 ])
             ])
-        ], style={'marginTop': '20px'})
+        ], style={'marginTop': '20px'}),
+        
+        # --- ADDED: Risk Analysis Section ---
+        html.Div(style={'borderTop': '1px solid #ccc', 'marginTop': '20px', 'paddingTop': '20px'}, children=[
+            html.H3("Risk Analysis (Monte Carlo)", style={'textAlign': 'center'}),
+            html.Div([
+                html.Label("Number of Simulations to Run:"),
+                dcc.Input(id='mc-runs-input', type='number', value=100, min=1, step=10, style={'width': '100px', 'marginLeft': '10px'})
+            ], style={'textAlign': 'center', 'marginBottom': '10px'}),
+            html.P("This will run the simulation multiple times with random variations in Project Durations and Employee Overhead to see a range of possible outcomes.", style={'textAlign': 'center', 'fontSize': '14px', 'color': '#666'})
+        ])
     ]),
 
     html.Div(style={'textAlign': 'center', 'marginBottom': '20px'}, children=[
@@ -282,15 +327,23 @@ def toggle_personalized_inputs(scenario_name):
     return {'display': 'block', 'marginTop': '20px', 'borderTop': '1px solid #ccc', 'paddingTop': '20px'} if scenario_name == 'Personalized' else {'display': 'none'}
 
 @app.callback(
+    Output('dynamic-year-inputs-container', 'children'),
+    Input('num-years-input', 'value')
+)
+def update_year_inputs(num_years):
+    if num_years is None or num_years < 1:
+        return []
+    return [create_year_inputs(i) for i in range(1, num_years + 1)]
+
+
+@app.callback(
     Output('output-graphs', 'children'),
     Input('run-button', 'n_clicks'),
     [
         State('scenario-dropdown', 'value'), State('conversion-rate-slider', 'value'), State('duration-input', 'value'),
-        # Personalized scenario inputs
-        State('pa-small-y1', 'value'), State('pa-medium-y1', 'value'), State('pa-large-y1', 'value'),
-        State('aw-small-y1', 'value'), State('aw-medium-y1', 'value'), State('aw-large-y1', 'value'),
-        State('pa-small-y2', 'value'), State('pa-medium-y2', 'value'), State('pa-large-y2', 'value'),
-        State('aw-small-y2', 'value'), State('aw-medium-y2', 'value'), State('aw-large-y2', 'value'),
+        # Dynamic year inputs
+        State({'type': 'pa-small-input', 'index': ALL}, 'value'), State({'type': 'pa-medium-input', 'index': ALL}, 'value'), State({'type': 'pa-large-input', 'index': ALL}, 'value'),
+        State({'type': 'aw-small-input', 'index': ALL}, 'value'), State({'type': 'aw-medium-input', 'index': ALL}, 'value'), State({'type': 'aw-large-input', 'index': ALL}, 'value'),
         # Custom duration inputs
         State('dur-pa-small', 'value'), State('dur-pa-medium', 'value'), State('dur-pa-large', 'value'),
         State('dur-aw-small', 'value'), State('dur-aw-medium', 'value'), State('dur-aw-large', 'value'),
@@ -307,85 +360,175 @@ def toggle_personalized_inputs(scenario_name):
         State('coef-taxtechnical-aw-small', 'value'), State('coef-taxtechnical-aw-medium', 'value'), State('coef-taxtechnical-aw-large', 'value'),
         State('coef-planningengineer-pa-small', 'value'), State('coef-planningengineer-pa-medium', 'value'), State('coef-planningengineer-pa-large', 'value'),
         State('coef-planningengineer-aw-small', 'value'), State('coef-planningengineer-aw-medium', 'value'), State('coef-planningengineer-aw-large', 'value'),
-        # Salary inputs
+        # Salary and overhead inputs
         State('salary-analyst', 'value'), State('salary-technical', 'value'), State('salary-projectmanager', 'value'),
         State('salary-taxengineer', 'value'), State('salary-taxtechnical', 'value'), State('salary-planningengineer', 'value'),
-        # --- FIXED: States for revenue inputs now use sanitized IDs ---
+        State('mean-employee-cost', 'value'),
+        # Revenue inputs
         State('revenue-preanalysis-small', 'value'), State('revenue-preanalysis-medium', 'value'), State('revenue-preanalysis-large', 'value'),
         State('revenue-actualwork-small', 'value'), State('revenue-actualwork-medium', 'value'), State('revenue-actualwork-large', 'value'),
+        # Recurring entry inputs
+        State({'type': 'entry-name', 'index': ALL}, 'value'), State({'type': 'entry-start', 'index': ALL}, 'value'),
+        State({'type': 'entry-end', 'index': ALL}, 'value'), State({'type': 'entry-value', 'index': ALL}, 'value'),
+        State({'type': 'entry-type', 'index': ALL}, 'value'),
+        # --- ADDED: State for Monte Carlo runs ---
+        State('mc-runs-input', 'value'),
     ]
 )
 def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
-                     pa_s1, pa_m1, pa_l1, aw_s1, aw_m1, aw_l1,
-                     pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2,
+                     pa_s_all, pa_m_all, pa_l_all, aw_s_all, aw_m_all, aw_l_all,
                      dur_pa_s, dur_pa_m, dur_pa_l, dur_aw_s, dur_aw_m, dur_aw_l,
                      *args): 
     if n_clicks == 0:
         return html.Div("Please set your parameters and click 'Run Simulation'.", style={'textAlign': 'center', 'padding': '50px', 'fontSize': '18px'})
 
+    # Unpack all arguments from *args
     coeffs = args[:36]
     salaries_tuple = args[36:42]
-    revenues_tuple = args[42:]
+    mean_employee_cost_base = args[42]
+    revenues_tuple = args[43:49]
+    entry_names, entry_starts, entry_ends, entry_values, entry_types = args[49:54]
+    mc_runs = args[54]
 
-    if scenario_name == 'Personalized':
-        pa_projects = [{"Small": pa_s1, "Medium": pa_m1, "Large": pa_l1}, {"Small": pa_s2, "Medium": pa_m2, "Large": pa_l2}]
-        aw_projects = [{"Small": aw_s1, "Medium": aw_m1, "Large": aw_l1}, {"Small": aw_s2, "Medium": aw_m2, "Large": aw_l2}]
-    else:
-        scenario = SCENARIOS[scenario_name]
-        pa_projects, aw_projects = scenario['pa'], scenario['aw']
+    # --- FIX: Ensure mc_runs is at least 1 to prevent crash ---
+    if mc_runs is None or mc_runs < 1:
+        mc_runs = 1
+
+    # --- MONTE CARLO SIMULATION LOOP ---
+    all_runs_cash_flow = []
+    # Store the last run's df for the representative graphs
+    last_run_df = None
     
-    custom_durations = {
-        "Pre-analysis": {"Small": dur_pa_s, "Medium": dur_pa_m, "Large": dur_pa_l},
-        "Actual Work": {"Small": dur_aw_s, "Medium": dur_aw_m, "Large": dur_aw_l}
-    }
+    for i in range(mc_runs):
+        # --- Introduce randomness for this specific run ---
+        # Randomize durations by +/- 15%
+        randomized_durations = {
+            "Pre-analysis": {
+                "Small": max(1, round(dur_pa_s * random.uniform(0.85, 1.15))),
+                "Medium": max(1, round(dur_pa_m * random.uniform(0.85, 1.15))),
+                "Large": max(1, round(dur_pa_l * random.uniform(0.85, 1.15)))
+            },
+            "Actual Work": {
+                "Small": max(1, round(dur_aw_s * random.uniform(0.85, 1.15))),
+                "Medium": max(1, round(dur_aw_m * random.uniform(0.85, 1.15))),
+                "Large": max(1, round(dur_aw_l * random.uniform(0.85, 1.15)))
+            }
+        }
+        # Randomize employee overhead by +/- 20%
+        randomized_employee_cost = mean_employee_cost_base * random.uniform(0.80, 1.20)
 
-    custom_coeffs = {"Pre-analysis": {}, "Actual Work": {}}
-    roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
-    c_idx = 0
-    for role in roles:
-        custom_coeffs["Pre-analysis"][role] = {"Small": coeffs[c_idx], "Medium": coeffs[c_idx+1], "Large": coeffs[c_idx+2]}
-        custom_coeffs["Actual Work"][role] = {"Small": coeffs[c_idx+3], "Medium": coeffs[c_idx+4], "Large": coeffs[c_idx+5]}
-        c_idx += 6
-    
-    salaries = {role: salaries_tuple[i] for i, role in enumerate(roles)}
-    
-    custom_revenues = {
-        "Pre-analysis": {"Small": revenues_tuple[0], "Medium": revenues_tuple[1], "Large": revenues_tuple[2]},
-        "Actual Work": {"Small": revenues_tuple[3], "Medium": revenues_tuple[4], "Large": revenues_tuple[5]}
-    }
+        # --- The rest of the logic is now inside the loop ---
+        if scenario_name == 'Personalized':
+            pa_projects = []
+            aw_projects = []
+            # Use a different loop variable to avoid conflict
+            for j in range(len(pa_s_all)):
+                pa_projects.append({"Small": pa_s_all[j], "Medium": pa_m_all[j], "Large": pa_l_all[j]})
+                aw_projects.append({"Small": aw_s_all[j], "Medium": aw_m_all[j], "Large": aw_l_all[j]})
+        else:
+            scenario = SCENARIOS[scenario_name]
+            pa_projects, aw_projects = scenario['pa'], scenario['aw']
+        
+        custom_coeffs = {"Pre-analysis": {}, "Actual Work": {}}
+        roles = ["Analyst", "Technical", "Project Manager", "Tax Engineer", "Tax Technical", "Planning Engineer"]
+        c_idx = 0
+        for role in roles:
+            custom_coeffs["Pre-analysis"][role] = {"Small": coeffs[c_idx], "Medium": coeffs[c_idx+1], "Large": coeffs[c_idx+2]}
+            custom_coeffs["Actual Work"][role] = {"Small": coeffs[c_idx+3], "Medium": coeffs[c_idx+4], "Large": coeffs[c_idx+5]}
+            c_idx += 6
+        
+        salaries = {role: salaries_tuple[i] for i, role in enumerate(roles)}
+        
+        custom_revenues = {
+            "Pre-analysis": {"Small": revenues_tuple[0], "Medium": revenues_tuple[1], "Large": revenues_tuple[2]},
+            "Actual Work": {"Small": revenues_tuple[3], "Medium": revenues_tuple[4], "Large": revenues_tuple[5]}
+        }
 
-    conversion_rate = conversion_rate_percent / 100.0
+        recurring_expenses = []
+        recurring_revenues = []
+        for i in range(len(entry_names)):
+            name, start_str, end_str, value, entry_type = entry_names[i], entry_starts[i], entry_ends[i], entry_values[i], entry_types[i]
+            if name and start_str and value:
+                try:
+                    start_date = pd.to_datetime(start_str, format='%Y-%m')
+                    end_date = pd.to_datetime(end_str, format='%Y-%m') if end_str else pd.Timestamp.max
+                    entry = {'start': start_date, 'end': end_date, 'value': value}
+                    if entry_type == 'expense':
+                        recurring_expenses.append(entry)
+                    else:
+                        recurring_revenues.append(entry)
+                except ValueError:
+                    pass 
 
-    simulation_df = run_simulation(
-        all_years_pa_counts=pa_projects,
-        all_years_aw_base_counts=aw_projects,
-        conversion_rate=conversion_rate,
-        simulation_duration_months=duration,
-        project_durations=custom_durations,
-        staffing_coefficients=custom_coeffs 
-    )
+        conversion_rate = conversion_rate_percent / 100.0
 
-    simulation_df['Total Monthly Cost'] = 0
-    for role in roles:
-        simulation_df['Total Monthly Cost'] += simulation_df[f'{role} Hired (Total)'] * salaries[role]
-    
-    revenue_map = {
-        "PA Small": custom_revenues["Pre-analysis"]["Small"], "PA Medium": custom_revenues["Pre-analysis"]["Medium"], "PA Large": custom_revenues["Pre-analysis"]["Large"],
-        "AW Small": custom_revenues["Actual Work"]["Small"], "AW Medium": custom_revenues["Actual Work"]["Medium"], "AW Large": custom_revenues["Actual Work"]["Large"]
-    }
-    shifted_projects = simulation_df[revenue_map.keys()].shift(1).fillna(0)
-    simulation_df['Monthly Revenue'] = (shifted_projects * pd.Series(revenue_map)).sum(axis=1)
-    
-    simulation_df['Cash Flow'] = simulation_df['Monthly Revenue'] - simulation_df['Total Monthly Cost']
-    total_project_cost = simulation_df['Total Monthly Cost'].sum()
-    total_project_revenue = simulation_df['Monthly Revenue'].sum()
-    total_cash_flow = simulation_df['Cash Flow'].sum()
+        simulation_df = run_simulation(
+            all_years_pa_counts=pa_projects,
+            all_years_aw_base_counts=aw_projects,
+            conversion_rate=conversion_rate,
+            simulation_duration_months=duration,
+            project_durations=randomized_durations, # Use randomized durations
+            staffing_coefficients=custom_coeffs 
+        )
 
-    hired_total_columns = [col for col in simulation_df.columns if 'Hired (Total)' in col]
+        simulation_df['Total Employee Cost'] = 0
+        total_employees = 0
+        for role in roles:
+            total_hired_col = f'{role} Hired (Total)'
+            simulation_df['Total Employee Cost'] += simulation_df[total_hired_col] * salaries[role]
+            total_employees += simulation_df[total_hired_col]
+        
+        simulation_df['Total Employee Cost'] += total_employees * randomized_employee_cost # Use randomized overhead
+
+        simulation_df['Recurring Expenses'] = 0
+        for expense in recurring_expenses:
+            mask = (simulation_df['Date'] >= expense['start']) & (simulation_df['Date'] <= expense['end'])
+            simulation_df.loc[mask, 'Recurring Expenses'] += expense['value']
+
+        simulation_df['Total Monthly Cost'] = simulation_df['Total Employee Cost'] + simulation_df['Recurring Expenses']
+        
+        revenue_map = {
+            "PA Small": custom_revenues["Pre-analysis"]["Small"], "PA Medium": custom_revenues["Pre-analysis"]["Medium"], "PA Large": custom_revenues["Pre-analysis"]["Large"],
+            "AW Small": custom_revenues["Actual Work"]["Small"], "AW Medium": custom_revenues["Actual Work"]["Medium"], "AW Large": custom_revenues["Actual Work"]["Large"]
+        }
+        shifted_projects = simulation_df[revenue_map.keys()].shift(1).fillna(0)
+        simulation_df['Project Revenue'] = (shifted_projects * pd.Series(revenue_map)).sum(axis=1)
+
+        simulation_df['Recurring Revenue'] = 0
+        for revenue in recurring_revenues:
+            mask = (simulation_df['Date'] >= revenue['start']) & (simulation_df['Date'] <= revenue['end'])
+            simulation_df.loc[mask, 'Recurring Revenue'] += revenue['value']
+
+        simulation_df['Monthly Revenue'] = simulation_df['Project Revenue'] + simulation_df['Recurring Revenue']
+        simulation_df['Cash Flow'] = simulation_df['Monthly Revenue'] - simulation_df['Total Monthly Cost']
+        simulation_df['Cumulative Cash Flow'] = simulation_df['Cash Flow'].cumsum()
+        
+        all_runs_cash_flow.append(simulation_df['Cumulative Cash Flow'])
+        
+        # Store the dataframe from each run, the last one will be used for representative graphs
+        last_run_df = simulation_df
+
+    # --- END OF MONTE CARLO LOOP ---
+
+    # Process Monte Carlo results
+    mc_df = pd.concat(all_runs_cash_flow, axis=1)
+    mc_results = pd.DataFrame({
+        'Date': last_run_df['Date'],
+        'Median': mc_df.quantile(0.5, axis=1),
+        'Lower Bound (5th percentile)': mc_df.quantile(0.05, axis=1),
+        'Upper Bound (95th percentile)': mc_df.quantile(0.95, axis=1)
+    })
+
+    # Use the last run for the other graphs and totals (as a representative sample)
+    total_project_cost = last_run_df['Total Monthly Cost'].sum()
+    total_project_revenue = last_run_df['Monthly Revenue'].sum()
+    total_cash_flow = last_run_df['Cash Flow'].sum()
+
+    hired_total_columns = [col for col in last_run_df.columns if 'Hired (Total)' in col]
     mean_data = []
     for col in hired_total_columns:
         role_name = col.replace(" Hired (Total)", "")
-        mean_value = simulation_df[col].mean()
+        mean_value = last_run_df[col].mean()
         mean_data.append({
             "Role": role_name,
             "Mean Hired Employees": mean_value,
@@ -401,52 +544,64 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     except Exception as e:
         confirmation_message = f"❌ Error exporting to Excel: {e}. Please ensure 'openpyxl' is installed (`pip install openpyxl`)."
 
-    fig_employees = px.line(simulation_df, x='Date', y=hired_total_columns, title='Forecasted Hired Employees by Role (with Mean)')
+    # --- Create the graphs ---
+    fig_employees = px.line(last_run_df, x='Date', y=hired_total_columns, title='Forecasted Hired Employees by Role (Representative Run with Mean)')
     colors = px.colors.qualitative.Plotly
     for i, col in enumerate(hired_total_columns):
-        mean_value = simulation_df[col].mean()
+        mean_value = last_run_df[col].mean()
         line_color = colors[i % len(colors)]
-        fig_employees.add_shape(type="line", x0=simulation_df['Date'].min(), y0=mean_value, x1=simulation_df['Date'].max(), y1=mean_value, line=dict(color=line_color, width=2, dash="dash"))
-        fig_employees.add_annotation(x=simulation_df['Date'].max(), y=mean_value, text=f"Mean: {mean_value:.1f}", showarrow=False, xshift=45, font=dict(color=line_color))
+        fig_employees.add_shape(type="line", x0=last_run_df['Date'].min(), y0=mean_value, x1=last_run_df['Date'].max(), y1=mean_value, line=dict(color=line_color, width=2, dash="dash"))
+        fig_employees.add_annotation(x=last_run_df['Date'].max(), y=mean_value, text=f"Mean: {mean_value:.1f}", showarrow=False, xshift=45, font=dict(color=line_color))
     fig_employees.for_each_trace(lambda t: t.update(name = t.name.replace(" Hired (Total)", "")))
     fig_employees.update_layout(legend_title_text='Employee Role', yaxis_title='Number of Employees')
 
     active_project_columns = ["PA Small", "PA Medium", "PA Large", "AW Small", "AW Medium", "AW Large"]
-    fig_projects = px.bar(simulation_df, x='Date', y=active_project_columns, title='Active Projects by Type and Scale Over Time')
+    fig_projects = px.bar(last_run_df, x='Date', y=active_project_columns, title='Active Projects by Type and Scale (Representative Run)')
     fig_projects.update_layout(legend_title_text='Project Type', yaxis_title='Number of Active Projects', barmode='stack')
     
-    fig_cash_flow = go.Figure()
-    fig_cash_flow.add_trace(go.Bar(
-        x=simulation_df['Date'],
-        y=simulation_df['Cash Flow'],
-        marker_color=['#2ca02c' if v >= 0 else '#d62728' for v in simulation_df['Cash Flow']],
-        name='Monthly Cash Flow'
-    ))
-    fig_cash_flow.update_layout(
-        title='Monthly Cash Flow (Revenue - Cost)',
-        yaxis_title='Cash Flow ($)',
-        yaxis_tickprefix='$'
+    fig_mc_cash_flow = go.Figure([
+        go.Scatter(
+            name='Upper Bound (95%)', x=mc_results['Date'], y=mc_results['Upper Bound (95th percentile)'],
+            mode='lines', line=dict(width=0.5, color='lightgrey')
+        ),
+        go.Scatter(
+            name='Lower Bound (5%)', x=mc_results['Date'], y=mc_results['Lower Bound (5th percentile)'],
+            mode='lines', line=dict(width=0.5, color='lightgrey'),
+            fillcolor='rgba(68, 68, 68, 0.2)', fill='tonexty'
+        ),
+        go.Scatter(
+            name='Median', x=mc_results['Date'], y=mc_results['Median'],
+            mode='lines', line=dict(color='rgb(31, 119, 180)')
+        ),
+    ])
+    fig_mc_cash_flow.update_layout(
+        title=f'Cumulative Cash Flow Confidence Interval ({mc_runs} runs)',
+        yaxis_title='Cumulative Cash Flow ($)',
+        yaxis_tickprefix='$',
+        showlegend=True
     )
+    fig_mc_cash_flow.add_hline(y=0, line_dash="dash", line_color="grey")
+
 
     return html.Div([
         html.Div(confirmation_message, style={'textAlign': 'center', 'color': 'green' if 'Successfully' in confirmation_message else 'red', 'marginBottom': '15px', 'fontWeight': 'bold'}),
         
         html.Div(style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '20px'}, children=[
             html.Div([
-                html.H4("Total Revenue", style={'textAlign': 'center', 'margin': '0'}),
+                html.H4("Total Revenue (Sample)", style={'textAlign': 'center', 'margin': '0'}),
                 html.P(f"${total_project_revenue:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#2ca02c', 'margin': '0'})
             ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
             html.Div([
-                html.H4("Total Cost", style={'textAlign': 'center', 'margin': '0'}),
+                html.H4("Total Cost (Sample)", style={'textAlign': 'center', 'margin': '0'}),
                 html.P(f"${total_project_cost:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#d62728', 'margin': '0'})
             ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
             html.Div([
-                html.H4("Net Cash Flow", style={'textAlign': 'center', 'margin': '0'}),
+                html.H4("Net Cash Flow (Sample)", style={'textAlign': 'center', 'margin': '0'}),
                 html.P(f"${total_cash_flow:,.2f}", style={'textAlign': 'center', 'fontSize': '24px', 'fontWeight': 'bold', 'color': '#007BFF', 'margin': '0'})
             ], style={'padding': '20px', 'backgroundColor': 'white', 'borderRadius': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.1)', 'width': '30%'}),
         ]),
         
-        dcc.Graph(id='cash-flow-graph', figure=fig_cash_flow),
+        dcc.Graph(id='mc-cash-flow-graph', figure=fig_mc_cash_flow),
         html.Hr(),
         dcc.Graph(id='employees-graph', figure=fig_employees),
         html.Hr(),

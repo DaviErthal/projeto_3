@@ -3,9 +3,7 @@
 # This script creates an interactive web-based dashboard for the workforce simulation
 # using the Dash framework by Plotly.
 #
-# NEW:
-# 1. Added dynamic year support for personalized scenarios.
-# 2. Reworked recurring entries to handle both revenues and expenses.
+# NEW: Added a cumulative cash flow graph.
 
 import math
 import random
@@ -17,18 +15,18 @@ import plotly.graph_objects as go
 # You will need to install dash, pandas, plotly, and openpyxl
 # pip install dash pandas plotly openpyxl
 import dash
-from dash import dcc, html, ALL
+from dash import dcc, html
 from dash.dependencies import Input, Output, State
 
-# --- PHASE 1: SIMULATION LOGIC ---
+# --- PHASE 1: SIMULATION LOGIC (Copied from our notebook) ---
 
-# Default Project Durations in months
+# Rule 1: Default Project Durations in months
 PROJECT_DURATIONS = {
     "Pre-analysis": { "Small": 3, "Medium": 6, "Large": 8 },
     "Actual Work": { "Small": 11, "Medium": 20, "Large": 25 }
 }
 
-# Default Staffing Coefficients
+# Rule 2: Default Staffing Coefficients
 STAFFING_COEFFICIENTS = {
     "Pre-analysis": {
         "Analyst": {"Small": 1/20, "Medium": 1/12, "Large": 1/6},
@@ -44,18 +42,20 @@ STAFFING_COEFFICIENTS = {
 
 # Default Monthly Salaries
 DEFAULT_SALARIES = {
-    "Analyst": 5000, "Technical": 6000, "Project Manager": 9000,
-    "Tax Engineer": 8500, "Tax Technical": 7000, "Planning Engineer": 8000
+    "Analyst": 16500, "Technical": 3100, "Project Manager": 18000,
+    "Tax Engineer": 16500, "Tax Technical": 3100, "Planning Engineer": 16500
 }
-DEFAULT_MEAN_EMPLOYEE_COST = 500
+# --- ADDED: Default per-employee overhead cost ---
+DEFAULT_MEAN_EMPLOYEE_COST = 10
+
 
 # Default Monthly Revenues
 DEFAULT_REVENUES = {
-    "Pre-analysis": {"Small": 1000, "Medium": 2000, "Large": 4000},
-    "Actual Work": {"Small": 15000, "Medium": 30000, "Large": 50000}
+    "Pre-analysis": {"Small": 4600, "Medium": 6250, "Large": 11828},
+    "Actual Work": {"Small": 10700, "Medium": 39200, "Large": 68600}
 }
 
-# --- Data Scenarios (Hardcoded for 2 years) ---
+# --- Data Scenarios ---
 SCENARIOS = {
     "Lote 1": {
         "pa": [{"Small": 44, "Medium": 64, "Large": 12}, {"Small": 26, "Medium": 38, "Large": 7}],
@@ -152,14 +152,14 @@ def create_year_inputs(year):
         html.H4(f"Year {year}", style={'marginTop': '20px'}),
         html.Div([
             html.Div([
-                html.Label("PA Small:"), dcc.Input(id={'type': 'pa-small-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
-                html.Label("PA Medium:"), dcc.Input(id={'type': 'pa-medium-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
-                html.Label("PA Large:"), dcc.Input(id={'type': 'pa-large-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Small:"), dcc.Input(id=f'pa-small-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Medium:"), dcc.Input(id=f'pa-medium-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("PA Large:"), dcc.Input(id=f'pa-large-y{year}', type='number', value=0, style={'width': '80px'}),
             ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px'}),
             html.Div([
-                html.Label("AW Small:"), dcc.Input(id={'type': 'aw-small-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
-                html.Label("AW Medium:"), dcc.Input(id={'type': 'aw-medium-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
-                html.Label("AW Large:"), dcc.Input(id={'type': 'aw-large-input', 'index': year}, type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Small:"), dcc.Input(id=f'aw-small-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Medium:"), dcc.Input(id=f'aw-medium-y{year}', type='number', value=0, style={'width': '80px'}),
+                html.Label("AW Large:"), dcc.Input(id=f'aw-large-y{year}', type='number', value=0, style={'width': '80px'}),
             ], style={'display': 'flex', 'justifyContent': 'space-around'}),
         ])
     ])
@@ -212,21 +212,15 @@ def create_revenue_inputs():
         inputs.append(html.Div(type_inputs))
     return html.Div(inputs)
 
-def create_recurring_entry_inputs():
+def create_recurring_expense_inputs():
     rows = []
-    for i in range(1, 4):
+    for i in range(1, 4): # Create 3 rows for expenses
         rows.append(html.Div([
-            dcc.Input(id={'type': 'entry-name', 'index': i}, type='text', placeholder=f'Entry #{i} Name', style={'width': '25%'}),
-            dcc.Input(id={'type': 'entry-start', 'index': i}, type='text', placeholder='Start (YYYY-MM)', style={'width': '20%'}),
-            dcc.Input(id={'type': 'entry-end', 'index': i}, type='text', placeholder='End (YYYY-MM)', style={'width': '20%'}),
-            dcc.Input(id={'type': 'entry-value', 'index': i}, type='number', placeholder='Monthly Value', style={'width': '15%'}),
-            dcc.RadioItems(
-                id={'type': 'entry-type', 'index': i},
-                options=[{'label': 'Expense', 'value': 'expense'}, {'label': 'Revenue', 'value': 'revenue'}],
-                value='expense',
-                labelStyle={'display': 'inline-block', 'marginRight': '10px'}
-            )
-        ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px', 'alignItems': 'center'}))
+            dcc.Input(id=f'expense-name-{i}', type='text', placeholder=f'Expense #{i} Name', style={'width': '25%'}),
+            dcc.Input(id=f'expense-start-{i}', type='text', placeholder='Start (YYYY-MM)', style={'width': '20%'}),
+            dcc.Input(id=f'expense-end-{i}', type='text', placeholder='End (YYYY-MM)', style={'width': '20%'}),
+            dcc.Input(id=f'expense-cost-{i}', type='number', placeholder='Monthly Cost', style={'width': '20%'})
+        ], style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '10px'}))
     return html.Div(rows)
 
 
@@ -254,11 +248,7 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
         
         html.Div(id='personalized-inputs-container', style={'display': 'none', 'marginTop': '20px', 'borderTop': '1px solid #ccc', 'paddingTop': '20px'}, children=[
             html.H3("Enter Personalized Scenario Data", style={'textAlign': 'center'}),
-            html.Div([
-                html.Label("Number of Years to Plan:"),
-                dcc.Input(id='num-years-input', type='number', value=2, min=1, max=10, step=1)
-            ], style={'textAlign': 'center', 'marginBottom': '10px'}),
-            html.Div(id='dynamic-year-inputs-container') # Container for dynamic year inputs
+            create_year_inputs(1), create_year_inputs(2),
         ]),
         
         html.Details([
@@ -292,8 +282,8 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
                     html.Div(create_revenue_inputs(), style={'marginTop': '10px'})
                 ]),
                 html.Details([
-                    html.Summary('Add Recurring Entries (Revenues/Expenses)'),
-                    html.Div(create_recurring_entry_inputs(), style={'marginTop': '10px'})
+                    html.Summary('Add Recurring Expenses'),
+                    html.Div(create_recurring_expense_inputs(), style={'marginTop': '10px'})
                 ])
             ])
         ], style={'marginTop': '20px'})
@@ -315,25 +305,16 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'padding': '20px
 def toggle_personalized_inputs(scenario_name):
     return {'display': 'block', 'marginTop': '20px', 'borderTop': '1px solid #ccc', 'paddingTop': '20px'} if scenario_name == 'Personalized' else {'display': 'none'}
 
-# --- ADDED: Callback to dynamically generate year inputs ---
-@app.callback(
-    Output('dynamic-year-inputs-container', 'children'),
-    Input('num-years-input', 'value')
-)
-def update_year_inputs(num_years):
-    if num_years is None or num_years < 1:
-        return []
-    return [create_year_inputs(i) for i in range(1, num_years + 1)]
-
-
 @app.callback(
     Output('output-graphs', 'children'),
     Input('run-button', 'n_clicks'),
     [
         State('scenario-dropdown', 'value'), State('conversion-rate-slider', 'value'), State('duration-input', 'value'),
-        # --- MODIFIED: Using pattern-matching for dynamic year inputs ---
-        State({'type': 'pa-small-input', 'index': ALL}, 'value'), State({'type': 'pa-medium-input', 'index': ALL}, 'value'), State({'type': 'pa-large-input', 'index': ALL}, 'value'),
-        State({'type': 'aw-small-input', 'index': ALL}, 'value'), State({'type': 'aw-medium-input', 'index': ALL}, 'value'), State({'type': 'aw-large-input', 'index': ALL}, 'value'),
+        # Personalized scenario inputs
+        State('pa-small-y1', 'value'), State('pa-medium-y1', 'value'), State('pa-large-y1', 'value'),
+        State('aw-small-y1', 'value'), State('aw-medium-y1', 'value'), State('aw-large-y1', 'value'),
+        State('pa-small-y2', 'value'), State('pa-medium-y2', 'value'), State('pa-large-y2', 'value'),
+        State('aw-small-y2', 'value'), State('aw-medium-y2', 'value'), State('aw-large-y2', 'value'),
         # Custom duration inputs
         State('dur-pa-small', 'value'), State('dur-pa-medium', 'value'), State('dur-pa-large', 'value'),
         State('dur-aw-small', 'value'), State('dur-aw-medium', 'value'), State('dur-aw-large', 'value'),
@@ -357,14 +338,15 @@ def update_year_inputs(num_years):
         # Revenue inputs
         State('revenue-preanalysis-small', 'value'), State('revenue-preanalysis-medium', 'value'), State('revenue-preanalysis-large', 'value'),
         State('revenue-actualwork-small', 'value'), State('revenue-actualwork-medium', 'value'), State('revenue-actualwork-large', 'value'),
-        # --- MODIFIED: Using pattern-matching for recurring entries ---
-        State({'type': 'entry-name', 'index': ALL}, 'value'), State({'type': 'entry-start', 'index': ALL}, 'value'),
-        State({'type': 'entry-end', 'index': ALL}, 'value'), State({'type': 'entry-value', 'index': ALL}, 'value'),
-        State({'type': 'entry-type', 'index': ALL}, 'value'),
+        # Recurring expense inputs
+        State('expense-name-1', 'value'), State('expense-start-1', 'value'), State('expense-end-1', 'value'), State('expense-cost-1', 'value'),
+        State('expense-name-2', 'value'), State('expense-start-2', 'value'), State('expense-end-2', 'value'), State('expense-cost-2', 'value'),
+        State('expense-name-3', 'value'), State('expense-start-3', 'value'), State('expense-end-3', 'value'), State('expense-cost-3', 'value'),
     ]
 )
 def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
-                     pa_s_all, pa_m_all, pa_l_all, aw_s_all, aw_m_all, aw_l_all,
+                     pa_s1, pa_m1, pa_l1, aw_s1, aw_m1, aw_l1,
+                     pa_s2, pa_m2, pa_l2, aw_s2, aw_m2, aw_l2,
                      dur_pa_s, dur_pa_m, dur_pa_l, dur_aw_s, dur_aw_m, dur_aw_l,
                      *args): 
     if n_clicks == 0:
@@ -375,16 +357,11 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     salaries_tuple = args[36:42]
     mean_employee_cost = args[42]
     revenues_tuple = args[43:49]
-    # Unpack recurring entry lists
-    entry_names, entry_starts, entry_ends, entry_values, entry_types = args[49:]
+    expenses_tuple = args[49:]
 
     if scenario_name == 'Personalized':
-        pa_projects = []
-        aw_projects = []
-        # Reconstruct the yearly data from the dynamic inputs
-        for i in range(len(pa_s_all)):
-            pa_projects.append({"Small": pa_s_all[i], "Medium": pa_m_all[i], "Large": pa_l_all[i]})
-            aw_projects.append({"Small": aw_s_all[i], "Medium": aw_m_all[i], "Large": aw_l_all[i]})
+        pa_projects = [{"Small": pa_s1, "Medium": pa_m1, "Large": pa_l1}, {"Small": pa_s2, "Medium": pa_m2, "Large": pa_l2}]
+        aw_projects = [{"Small": aw_s1, "Medium": aw_m1, "Large": aw_l1}, {"Small": aw_s2, "Medium": aw_m2, "Large": aw_l2}]
     else:
         scenario = SCENARIOS[scenario_name]
         pa_projects, aw_projects = scenario['pa'], scenario['aw']
@@ -409,20 +386,14 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         "Actual Work": {"Small": revenues_tuple[3], "Medium": revenues_tuple[4], "Large": revenues_tuple[5]}
     }
 
-    # --- MODIFIED: Process recurring entries ---
     recurring_expenses = []
-    recurring_revenues = []
-    for i in range(len(entry_names)):
-        name, start_str, end_str, value, entry_type = entry_names[i], entry_starts[i], entry_ends[i], entry_values[i], entry_types[i]
-        if name and start_str and value:
+    for i in range(0, len(expenses_tuple), 4):
+        name, start_str, end_str, cost = expenses_tuple[i:i+4]
+        if name and start_str and cost:
             try:
                 start_date = pd.to_datetime(start_str, format='%Y-%m')
                 end_date = pd.to_datetime(end_str, format='%Y-%m') if end_str else pd.Timestamp.max
-                entry = {'start': start_date, 'end': end_date, 'value': value}
-                if entry_type == 'expense':
-                    recurring_expenses.append(entry)
-                else:
-                    recurring_revenues.append(entry)
+                recurring_expenses.append({'start': start_date, 'end': end_date, 'cost': cost})
             except ValueError:
                 pass 
 
@@ -437,7 +408,6 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         staffing_coefficients=custom_coeffs 
     )
 
-    # --- MODIFIED: Cost and Revenue Calculation ---
     simulation_df['Total Employee Cost'] = 0
     total_employees = 0
     for role in roles:
@@ -450,7 +420,7 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
     simulation_df['Recurring Expenses'] = 0
     for expense in recurring_expenses:
         mask = (simulation_df['Date'] >= expense['start']) & (simulation_df['Date'] <= expense['end'])
-        simulation_df.loc[mask, 'Recurring Expenses'] += expense['value']
+        simulation_df.loc[mask, 'Recurring Expenses'] += expense['cost']
 
     simulation_df['Total Monthly Cost'] = simulation_df['Total Employee Cost'] + simulation_df['Recurring Expenses']
     
@@ -459,17 +429,11 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         "AW Small": custom_revenues["Actual Work"]["Small"], "AW Medium": custom_revenues["Actual Work"]["Medium"], "AW Large": custom_revenues["Actual Work"]["Large"]
     }
     shifted_projects = simulation_df[revenue_map.keys()].shift(1).fillna(0)
-    simulation_df['Project Revenue'] = (shifted_projects * pd.Series(revenue_map)).sum(axis=1)
-
-    simulation_df['Recurring Revenue'] = 0
-    for revenue in recurring_revenues:
-        mask = (simulation_df['Date'] >= revenue['start']) & (simulation_df['Date'] <= revenue['end'])
-        simulation_df.loc[mask, 'Recurring Revenue'] += revenue['value']
-
-    simulation_df['Monthly Revenue'] = simulation_df['Project Revenue'] + simulation_df['Recurring Revenue']
+    simulation_df['Monthly Revenue'] = (shifted_projects * pd.Series(revenue_map)).sum(axis=1)
     
     simulation_df['Cash Flow'] = simulation_df['Monthly Revenue'] - simulation_df['Total Monthly Cost']
     
+    # --- ADDED: Cumulative Cash Flow Calculation ---
     simulation_df['Cumulative Cash Flow'] = simulation_df['Cash Flow'].cumsum()
 
     total_project_cost = simulation_df['Total Monthly Cost'].sum()
@@ -524,6 +488,7 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         yaxis_tickprefix='$'
     )
 
+    # --- ADDED: Cumulative Cash Flow Graph ---
     fig_cumulative_cash_flow = px.area(
         simulation_df,
         x='Date',
@@ -556,6 +521,7 @@ def update_dashboard(n_clicks, scenario_name, conversion_rate_percent, duration,
         ]),
         
         dcc.Graph(id='cash-flow-graph', figure=fig_cash_flow),
+        # --- ADDED: Display the new graph ---
         dcc.Graph(id='cumulative-cash-flow-graph', figure=fig_cumulative_cash_flow),
         html.Hr(),
         dcc.Graph(id='employees-graph', figure=fig_employees),
